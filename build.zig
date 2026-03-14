@@ -25,9 +25,7 @@ pub fn build(b: *std.Build) void {
     };
 
     const base_flags = [_][]const u8{
-        "-DAES_ASM",
         "-DENGINESDIR=\"/dev/null\"",
-        "-DL_ENDIAN",
         "-DMODULESDIR=\"/dev/null\"",
         ssl_dir_flag,
         "-DOPENSSL_BUILDING_OPENSSL",
@@ -37,7 +35,13 @@ pub fn build(b: *std.Build) void {
         "-DOPENSSL_NO_APPLE_CRYPTO_RANDOM",
     };
 
-    const crypto_flags = base_flags ++ [_][]const u8{
+    // x86_64-specific ASM flags
+    const x86_64_base_flags = base_flags ++ [_][]const u8{
+        "-DAES_ASM",
+        "-DL_ENDIAN",
+    };
+
+    const x86_64_crypto_flags = x86_64_base_flags ++ [_][]const u8{
         "-DBSAES_ASM",
         "-DCMLL_ASM",
         "-DECP_NISTZ256_ASM",
@@ -58,6 +62,13 @@ pub fn build(b: *std.Build) void {
         "-DWHIRLPOOL_ASM",
         "-DX25519_ASM",
     };
+
+    // Assembly files are ELF-only (Linux), not Mach-O (macOS)
+    const use_x86_64_asm = target.result.cpu.arch == .x86_64 and target.result.os.tag != .macos;
+
+    const ssl_flags: []const []const u8 = if (use_x86_64_asm) &x86_64_base_flags else &base_flags;
+
+    const crypto_flags: []const []const u8 = if (use_x86_64_asm) &x86_64_crypto_flags else &base_flags;
 
     mod.addCSourceFiles(.{
         .root = upstream.path("ssl"),
@@ -157,7 +168,7 @@ pub fn build(b: *std.Build) void {
             "tls_depr.c",
             "tls_srp.c",
         },
-        .flags = &base_flags,
+        .flags = ssl_flags,
     });
 
     mod.addCSourceFiles(.{
@@ -358,7 +369,7 @@ pub fn build(b: *std.Build) void {
             "implementations/encode_decode/endecoder_common.c",
             "implementations/encode_decode/encode_key2ms.c",
         },
-        .flags = &base_flags,
+        .flags = ssl_flags,
     });
 
     mod.addCSourceFiles(.{
@@ -372,7 +383,7 @@ pub fn build(b: *std.Build) void {
             "common/der/der_dsa_gen.c",
             "common/der/der_rsa_gen.c",
         },
-        .flags = &base_flags,
+        .flags = ssl_flags,
     });
 
     mod.addCSourceFiles(.{
@@ -499,7 +510,7 @@ pub fn build(b: *std.Build) void {
             "bio/bss_null.c",
             "bio/bss_sock.c",
             "bio/ossl_core_bio.c",
-            "bn/asm/x86_64-gcc.c",
+            //"bn/asm/x86_64-gcc.c", // x86_64 only, added conditionally below
             "bn/bn_add.c",
             "bn/bn_asm.c",
             "bn/bn_blind.c",
@@ -881,7 +892,7 @@ pub fn build(b: *std.Build) void {
             "kdf/kdf_err.c",
             "lhash/lh_stats.c",
             "lhash/lhash.c",
-            "loongarchcap.c",
+            //"loongarchcap.c", // LoongArch/Linux only
             //"md2/md2_dgst.c",
             //"md2/md2_one.c",
             "md4/md4_dgst.c",
@@ -1189,11 +1200,18 @@ pub fn build(b: *std.Build) void {
             "x509/x_x509.c",
             "x509/x_x509a.c",
         },
-        .flags = &crypto_flags,
+        .flags = crypto_flags,
     });
 
-    switch (target.result.cpu.arch) {
-        .x86_64 => mod.addCSourceFiles(.{
+    if (use_x86_64_asm) {
+        mod.addCSourceFiles(.{
+            .root = upstream.path("crypto"),
+            .files = &.{
+                "bn/asm/x86_64-gcc.c",
+            },
+            .flags = crypto_flags,
+        });
+        mod.addCSourceFiles(.{
             .root = b.path("crypto"),
             .files = &.{
                 "aes/aes-x86_64.s",
@@ -1207,7 +1225,6 @@ pub fn build(b: *std.Build) void {
                 "camellia/cmll-x86_64.s",
                 "chacha/chacha-x86_64.s",
                 "ec/ecp_nistz256-x86_64.s",
-                "ec/x25519-x86_64.s",
                 "ec/x25519-x86_64.s",
                 "md5/md5-x86_64.s",
                 "modes/aesni-gcm-x86_64.s",
@@ -1234,18 +1251,19 @@ pub fn build(b: *std.Build) void {
 
                 "modes/aes-gcm-avx512.s",
             },
-            .flags = &crypto_flags,
-        }),
-        else => {
-            // On non-x86_64 targets, include C fallback for AES CBC
-            mod.addCSourceFiles(.{
-                .root = upstream.path("crypto"),
-                .files = &.{
-                    "aes/aes_cbc.c",
-                },
-                .flags = &crypto_flags,
-            });
-        },
+            .flags = crypto_flags,
+        });
+    } else {
+        // On non-ASM targets, include C fallback implementations
+        mod.addCSourceFiles(.{
+            .root = upstream.path("crypto"),
+            .files = &.{
+                "aes/aes_core.c",
+                "aes/aes_cbc.c",
+                "mem_clr.c",
+            },
+            .flags = crypto_flags,
+        });
     }
 
     mod.addCSourceFiles(.{
@@ -1253,11 +1271,12 @@ pub fn build(b: *std.Build) void {
         .files = &.{
             "params_idx.c",
         },
-        .flags = &crypto_flags,
+        .flags = crypto_flags,
     });
 
     mod.addIncludePath(upstream.path("."));
     mod.addIncludePath(upstream.path("include"));
+    mod.addIncludePath(upstream.path("crypto"));
     mod.addIncludePath(b.path("include"));
     mod.addIncludePath(upstream.path("providers/common/include"));
     mod.addIncludePath(upstream.path("providers/implementations/include"));
