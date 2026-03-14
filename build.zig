@@ -384,7 +384,7 @@ pub fn build(b: *std.Build) void {
             //"LPdir_win.c",
             //"LPdir_win32.c",
             //"LPdir_wince.c",
-            "aes/aes_cbc.c",
+            //"aes/aes_cbc.c", // excluded: provided by aes-x86_64.s on x86_64
             "aes/aes_cfb.c",
             //"aes/aes_x86core.c",
             //"aes/aes_core.c",
@@ -1236,7 +1236,16 @@ pub fn build(b: *std.Build) void {
             },
             .flags = &crypto_flags,
         }),
-        else => {},
+        else => {
+            // On non-x86_64 targets, include C fallback for AES CBC
+            mod.addCSourceFiles(.{
+                .root = upstream.path("crypto"),
+                .files = &.{
+                    "aes/aes_cbc.c",
+                },
+                .flags = &crypto_flags,
+            });
+        },
     }
 
     mod.addCSourceFiles(.{
