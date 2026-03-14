@@ -32,6 +32,9 @@ pub fn build(b: *std.Build) void {
         ssl_dir_flag,
         "-DOPENSSL_BUILDING_OPENSSL",
         "-DOPENSSL_USE_NODELETE",
+        // Disable CommonCrypto random to allow cross-compilation to macOS
+        // without CoreServices framework. OpenSSL falls back to getentropy().
+        "-DOPENSSL_NO_APPLE_CRYPTO_RANDOM",
     };
 
     const crypto_flags = base_flags ++ [_][]const u8{
